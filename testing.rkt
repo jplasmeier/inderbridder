@@ -14,7 +14,7 @@
 ;(string-append "test 12: " (if (eq? (interpret-file "tests/test12.txt" ) (error)) "passed" "failed"))
 ;(string-append "test 13: " (if (eq? (interpret-file "tests/test13.txt" ) (error)) "passed" "failed"))
 ;(string-append "test 14: " (if (eq? (interpret-file "tests/test14.txt" ) (error)) "passed" "failed"))
-(string-append "test 15: " (if (eq? (interpret-file "tests/test15.txt" ) "TRUE") "passed" "failed")) 
+(string-append "test 15: " (if (eq? (interpret-file "tests/test15.txt" ) "TRUE") "passed" "failed"))
 (string-append "test 16: " (if (eq? (interpret-file "tests/test16.txt" ) 100) "passed" "failed"))
 (string-append "test 17: " (if (eq? (interpret-file "tests/test17.txt" ) "FALSE") "passed" "failed")) 
 (string-append "test 18: " (if (eq? (interpret-file "tests/test18.txt" ) "TRUE") "passed" "failed")) 

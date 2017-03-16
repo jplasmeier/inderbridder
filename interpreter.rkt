@@ -35,7 +35,6 @@
           (return? (car pt) state)))
      (else #f))))
 
-
 ; Helper Functions
 
 ; listOfOne? - returns TRUE if l is a list containing one atom
@@ -59,47 +58,17 @@
       ((atom? (car l)) (or (eq? a (car l)) (member* a (cdr l))))
       (else (or (member* a (car l)) (member* a (cdr l)))))))
 
-; expr-type?
-; functions which determine the type of an expression
-
 ; isUnary - determines if expr is a unary expr or not.
 ; (- 5) is unary
 ; (- 5 9) is not
 (define isUnary?
   (lambda (expr)
-    (equal? (cons (cadr expr) '()) (cdr expr))))
+    (and (not (null? (cdr expr))) (null? (cddr expr)))))
 
-; return? - determines if the expression is a return
-(define return?
-  (lambda (expr state)
-    (and (eq? (car expr) 'return) (or (bool? (cadr expr) state) (value? (cadr expr) state)))))
-
-; bool? - is the expr able to be evaluated by eval-bool?
-(define bool?
-  (lambda (expr state)
-    (cond
-      ((atom? expr) (or (eq? expr 'TRUE) (eq? expr 'true) (eq? expr 'FALSE) (eq? expr 'false)) ) ; if it's an atom, it must be 'TRUE or 'FALSE or a variable 0_0
-      ((eq? (operator expr) '!)
-       (or
-        (isVar? (operand1 expr) state)
-        (bool? (operand1 expr) state)))
-      ((eq? (operator expr) '||) (valid-expr-bool? expr state)) ; (valid-expr (op expr state)
-      ((eq? (operator expr) '&&) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '>) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '<) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '<=) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '>=) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '!=)
-       (or (and (value? (operand1 expr) state)
-                (value? (operand2 expr) state))
-           (and (bool? (operand1 expr) state)
-                (bool? (operand2 expr) state))))
-      ((eq? (operator expr) '==)
-       (or (and (value? (operand1 expr) state)
-                (value? (operand2 expr) state))
-           (and (bool? (operand1 expr) state)
-                (bool? (operand2 expr) state))))
-      (else #f))))
+; hasThreeTerms? - determines if expr has 3 terms (if w/o else)
+(define hasThreeTerms?
+  (lambda (expr)
+    (and (not (null? (cdr expr))) (not (null? (cddr expr))) (null? (cdddr expr)))))
 
 ; TODO - investigate deprecation 
 ;        (why not use bool?)
@@ -113,7 +82,15 @@
       (or (isVar? (operand2 expr) state)
           (number? (operand1 expr))
           (value? (operand1 expr))
-        (bool? (operand2 expr) state))))) 
+        (bool? (operand2 expr) state)))))
+
+; expr-type?
+; functions which determine the type of an expression
+
+; return? - determines if the expression is a return
+(define return?
+  (lambda (expr state)
+    (and (eq? (car expr) 'return) (or (bool? (cadr expr) state) (value? (cadr expr) state))))) 
 
 ; decl? - is the expression a declaration?
 ;         var x;
@@ -180,6 +157,32 @@
             (value? (operand2 aexpr) state)))
       (else #f))))
 
+; bool? - is the expr able to be evaluated by eval-bool?
+(define bool?
+  (lambda (expr state)
+    (cond
+      ((atom? expr) (or (eq? expr 'TRUE) (eq? expr 'true) (eq? expr 'FALSE) (eq? expr 'false)) ) ; if it's an atom, it must be 'TRUE or 'FALSE or a variable 0_0
+      ((eq? (operator expr) '!)
+       (or
+        (isVar? (operand1 expr) state)
+        (bool? (operand1 expr) state)))
+      ((eq? (operator expr) '||) (valid-expr-bool? expr state)) ; (valid-expr (op expr state)
+      ((eq? (operator expr) '&&) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '>) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '<) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '<=) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '>=) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '!=)
+       (or (and (value? (operand1 expr) state)
+                (value? (operand2 expr) state))
+           (and (bool? (operand1 expr) state)
+                (bool? (operand2 expr) state))))
+      ((eq? (operator expr) '==)
+       (or (and (value? (operand1 expr) state)
+                (value? (operand2 expr) state))
+           (and (bool? (operand1 expr) state)
+                (bool? (operand2 expr) state))))
+      (else #f))))
 
 ; eval-type functions
 ; evaluates an expression of a certain type
@@ -192,7 +195,6 @@
       ((bool? expr state) (if (eval-bool expr state) "TRUE" "FALSE"))
       ((isVar? expr state)))))
 
-
 ; eval-decl - evaluate variable declaration
 ;(if (null? (var-tail expr))
 (define eval-decl
@@ -202,6 +204,7 @@
         (cons (cons (var-name expr) (state-vars state)) (cons (cons (eval-bool-or-val (var-val expr) state) (state-values state)) '()))
         )))
   
+; eval-ass - evaluate an assignment 
 (define eval-ass
   (lambda (expr state)
     (cond
@@ -223,22 +226,21 @@
                         '())))))
               '()))))))
 
+; evaluate an if statement
 (define eval-if
   (lambda (expr state)
     (if
-      (has-else? expr) 
-      (eval-if-else expr state)
+      (hasThreeTerms? expr) 
       (if (eval-bool (if-cond expr) state) 
           (interpret (cons (if-body expr) '()) state)
-          state)))) 
+          state)
+      (eval-if-else expr state)))) 
       
-(define has-else?
-  (lambda (expr)
-    (not (listOfOne? (cdr (cdr expr))))))
-
 (define eval-if-else
   (lambda (expr state)
-    (if (eval-bool (if-cond expr) state) (interpret (cons (if-body expr) '()) state) (interpret (cons (if-else expr) '()) state))))
+    (if (eval-bool (if-cond expr) state)
+        (interpret (cons (if-body expr) '()) state)
+        (interpret (cons (if-else expr) '()) state))))
   
 ; eval-while - evaluate a while loop
 (define eval-while
@@ -268,6 +270,7 @@
       ((eq? (car (state-vars state)) var) (car (state-values state)))
       (else (deref var (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '())))))))
 
+; eval-bool-or-val - evaluate an expr of bool or value (numeric) type
 (define eval-bool-or-val
   (lambda (expr state)
     (cond

@@ -3,6 +3,33 @@
 
 ; Unit Tests
 
+; Helper Function Tests
+
+(test-me-list listOfOne?
+              '(((a)) ((a b)) (()) ((())))
+              '(#t #f #f #t)
+              '("list of one" "list of two" "null list" "list of null"))
+
+(test-me-list atom?
+              '((a) (()) ((a)))
+              '(#t #f #f)
+              '("atom" "null list" "list of atom"))
+
+(test-me-list member*
+              '((a (a b c)) (b (a d c)) (d (a (b (c d) e))) (a ()))
+              '(#t #f #t #f)
+              '("atom in flat" "not in flat" "in nested" "in null"))
+
+(test-me-list isUnary?
+              '(((- 5)) ((- 5 4)) ((-)))
+              '(#t #f #f)
+              '("unary" "binary" "0ary"))
+
+(test-me-list hasThreeTerms?
+              '(((- 5)) ((- 5 4)) ((-)) ((a b c d)))
+              '(#f #t #f #f)
+              '("two terms" "three terms" "one term" "four terms"))
+
 ; value? tests
 (if (and
 (eq? (value? '(- (/ (* 6 (+ 8 (% 5 3))) 11) 9) '(()())) #t)
@@ -12,7 +39,7 @@
 
 ;(eq? (decl? '(var x (/ (- (* 5 7) 3) 2))) #t)
 (test-me-list decl? 
-              '(((var x)) ((var x y)) ((var 3)) ((x = 3)) ((x - 2)) ((x y))) 
+              '(((var x) (()())) ((var x y) (()())) ((var 3) (()())) ((x = 3) (()())) ((x - 2) (()())) ((x y) (()()))) 
               '(#t #f #f #f #f #f) 
               '("declare one var" "declare two vars" "declare int" "declare assign" "declare arith" "declare two atoms"))
 
@@ -21,12 +48,6 @@
               '(((var x) (()())) ((var y) (()()))) 
               '(((x)(())) ((y)(()))) 
               '("declare x" "declare y"))
-
-; decl-val? test
-(test-me-list decl-val? 
-              '(((var x (/ (- (* 5 7) 3) 2)) (()()))) 
-              '(#t) 
-              '("declare x arith")) 
 
 ; ass? tests
 (test-me-list ass? 
