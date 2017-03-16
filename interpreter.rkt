@@ -10,18 +10,33 @@
 ; nested assignment (assignment returns value)
 (define interpret-file
   (lambda (file)
-    (interpret (parser file) '(()()))))
+    (interpret (parser file) '(()()) (lambda (x) x) (lambda (b) b))))
 
-; interpret 
+;(define multiply-cps2
+;  (lambda (l return-cont break-cont)
+;    (cond
+;      ((null? l) (return-cont 1))
+;      ((zero? (car l)) (break-cont 0))
+;      (else (multiply-cps2 (cdr l)
+;                           ; the return-cont is constructed normally
+;                           (lambda (v) (return-cont (* (car l) v)))
+;                           ; the break-cont is just passed along
+;                           break-cont) ))))
+;
+;(multiply-cps2 '(1 2 3 4 0 6 7 8 9) return-cont (lambda (v) v))
+
+; interpret - pt is parse tree
 (define interpret
-  (lambda (pt state)
+  (lambda (pt state return-cont break-cont)
     (cond
-      ((null? pt) state)
-      ((return? (car pt) state) (eval-return (cadr (car pt)) state))
-      ((decl? (car pt) state) (interpret (cdr pt) (eval-decl (car pt) state)))
-      ((ass? (car pt) state) (interpret (cdr pt) (eval-ass (car pt) state)))
-      ((if? (car pt) state) (interpret (cdr pt) (eval-if (car pt) state)))
-      ((while? (car pt) state) (interpret (cdr pt) (eval-while (car pt) state)))
+      ((null? pt) (return-cont state))
+      ((return? (car pt) state) (eval-return (cadr (car pt)) state)) ; hmm
+      ((decl? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-decl (car pt) state))) break-cont))
+      ((ass? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-ass (car pt) ex))) break-cont))
+      ((if? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-if (car pt) ex))) break-cont))
+      ((while? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-while (car pt) ex))) break-cont))
+      ((begin? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-begin (car pt) ex))) break-cont))
+      ((break? (car pt)) (break-cont state)) 
       (else (error "Error: Interpreter could not evaluate the expression.")))))
 
 (define interpretable?
@@ -123,6 +138,16 @@
 (define while?
   (lambda (expr state)
       (and (eq? (while-sym expr) 'while) (bool? (while-cond expr) state) (interpretable? (cons (while-body expr) '()) state))))
+
+; begin? - checks if the expr is a valid begin statement
+(define begin?
+  (lambda (expr state)
+    (eq? 'begin (car expr))))
+
+; break? - checks if the expr is a break
+(define break?
+  (lambda (expr)
+    (eq? 'break (car expr))))
 
 ; name? - is the expression a name?
         ; a name is a single atom
@@ -249,6 +274,11 @@
      (eval-bool (while-cond expr) state)
      (eval-while expr (interpret (cons (while-body expr) '()) state))
      state)))
+
+; eval-begin - evaluate a begin expression
+(define eval-begin
+  (lambda (expr state)
+    (interpret (cdr expr) state)))
 
 ; is this a variable?
 ; that is, is it in the state?

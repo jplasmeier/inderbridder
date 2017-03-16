@@ -188,6 +188,17 @@
 (display "\nreturn tests pass\n")
 (display "return tests fail\n"))
 
+; begin? tests
+(test-me-list begin?
+              '(((begin (var y 2) (var z (* x y)) (= x z)) (()())) ((bein (var y 2) (var z (* x y)) (= x z)) (()())))
+              '(#t #f)
+              '("valid" "typo"))
+; break? tests
+(test-me-list break?
+              '(((break)) ((bein)))
+              '(#t #f)
+              '("valid" "wrong"))
+
 ; integration tests
 ;(define state '(()()))
 ;(define state (interpret '((var x) (var y) (= y 5) (= x 2) (if (> y x) ((var ifvar) (= ifvar 40)))) state))
