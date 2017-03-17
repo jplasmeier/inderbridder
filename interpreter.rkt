@@ -29,14 +29,14 @@
 (define interpret
   (lambda (pt state return-cont break-cont)
     (cond
-      ((null? pt) (return-cont state))
+      ((null? pt) return-cont state)
       ((return? (car pt) state) (eval-return (cadr (car pt)) state)) ; hmm
-      ((decl? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-decl (car pt) state))) break-cont))
-      ((ass? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-ass (car pt) ex))) break-cont))
-      ((if? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-if (car pt) ex))) break-cont))
-      ((while? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-while (car pt) ex))) break-cont))
-      ((begin? (car pt) state) (interpret (cdr pt) state (lambda (ex) (return-cont (eval-begin (car pt) ex))) break-cont))
-      ((break? (car pt)) (break-cont state)) 
+      ((decl? (car pt) state) (interpret (cdr pt) (eval-decl (car pt) state) return-cont break-cont))
+      ((ass? (car pt) state) (interpret (cdr pt) (eval-ass (car pt) state) return-cont break-cont))
+      ((if? (car pt) state) (interpret (cdr pt) (eval-if (car pt) state return-cont break-cont) return-cont break-cont))
+      ((while? (car pt) state) (interpret (cdr pt) (eval-while (car pt) state return-cont break-cont) return-cont break-cont))
+      ;((eq? 'begin (car pt)) (interpret (cdr pt) state (lambda (ex) (return-cont ( (car pt) ex ))) break-cont))
+      ;((break? (car pt)) (break-cont state)) 
       (else (error "Error: Interpreter could not evaluate the expression.")))))
 
 (define interpretable?
@@ -142,7 +142,7 @@
 ; begin? - checks if the expr is a valid begin statement
 (define begin?
   (lambda (expr state)
-    (eq? 'begin (car expr))))
+    (begin (print state) (eq? 'begin (car expr)))))
 
 ; break? - checks if the expr is a break
 (define break?
@@ -253,32 +253,20 @@
 
 ; evaluate an if statement
 (define eval-if
-  (lambda (expr state)
-    (if
-      (hasThreeTerms? expr) 
-      (if (eval-bool (if-cond expr) state) 
-          (interpret (cons (if-body expr) '()) state)
-          state)
-      (eval-if-else expr state)))) 
-      
-(define eval-if-else
-  (lambda (expr state)
-    (if (eval-bool (if-cond expr) state)
-        (interpret (cons (if-body expr) '()) state)
-        (interpret (cons (if-else expr) '()) state))))
+  (lambda (expr state return-cont break-cont)
+      (if (eval-bool (if-cond expr) state)
+          (interpret (cons (if-body expr) '()) state return-cont break-cont) ; condition is true
+          (if (hasThreeTerms? expr)
+              state
+              (interpret (cons (if-else expr) '()) state return-cont break-cont))))) 
   
 ; eval-while - evaluate a while loop
 (define eval-while
-  (lambda (expr state)
+  (lambda (expr state return-cont break-cont)
     (if 
      (eval-bool (while-cond expr) state)
-     (eval-while expr (interpret (cons (while-body expr) '()) state))
+     (eval-while expr (interpret (cons (while-body expr) '()) state return-cont break-cont) return-cont break-cont)
      state)))
-
-; eval-begin - evaluate a begin expression
-(define eval-begin
-  (lambda (expr state)
-    (interpret (cdr expr) state)))
 
 ; is this a variable?
 ; that is, is it in the state?
