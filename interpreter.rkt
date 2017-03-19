@@ -5,39 +5,34 @@
 
 (load "simpleParser.scm")
 (load "lex.scm") ; parser dependency 
+(require racket/trace)
 
 ; interpreter TODO
 ; nested assignment (assignment returns value)
 (define interpret-file
   (lambda (file)
-    (interpret (parser file) '(()()) (lambda (x) x) (lambda (b) b))))
+    (interpret (parser file) (lambda (x) x))))
 
-;(define multiply-cps2
-;  (lambda (l return-cont break-cont)
-;    (cond
-;      ((null? l) (return-cont 1))
-;      ((zero? (car l)) (break-cont 0))
-;      (else (multiply-cps2 (cdr l)
-;                           ; the return-cont is constructed normally
-;                           (lambda (v) (return-cont (* (car l) v)))
-;                           ; the break-cont is just passed along
-;                           break-cont) ))))
-;
-;(multiply-cps2 '(1 2 3 4 0 6 7 8 9) return-cont (lambda (v) v))
-
-; interpret - pt is parse tree
 (define interpret
-  (lambda (pt state return-cont break-cont)
+  (lambda (pt state-cont)
+    (begin0  
     (cond
-      ((null? pt) return-cont state)
-      ((return? (car pt) state) (eval-return (cadr (car pt)) state)) ; hmm
-      ((decl? (car pt) state) (interpret (cdr pt) (eval-decl (car pt) state) return-cont break-cont))
-      ((ass? (car pt) state) (interpret (cdr pt) (eval-ass (car pt) state) return-cont break-cont))
-      ((if? (car pt) state) (interpret (cdr pt) (eval-if (car pt) state return-cont break-cont) return-cont break-cont))
-      ((while? (car pt) state) (interpret (cdr pt) (eval-while (car pt) state return-cont break-cont) return-cont break-cont))
-      ;((eq? 'begin (car pt)) (interpret (cdr pt) state (lambda (ex) (return-cont ( (car pt) ex ))) break-cont))
-      ;((break? (car pt)) (break-cont state)) 
-      (else (error "Error: Interpreter could not evaluate the expression.")))))
+      ((null? pt) state-cont)
+      ((eq? 'return (car (car pt))) (eval-return (cadr (car pt)) (state-cont e-s)))
+      ((ass? (car pt)) (interpret (cdr pt) (lambda (v) (eval-ass (car pt) (state-cont v)))))
+      ((decl? (car pt)) (interpret (cdr pt) (lambda (v) (eval-decl (car pt) (state-cont v)))))
+      ((eq? 'begin (car (car pt))) (interpret (cdr pt) (begin-scope (cdr (car pt)) state-cont)))
+      ((eq? (if-sym (car pt)) 'if) (interpret (cdr pt) (lambda (v) (eval-if (car pt) (push-frame (state-cont v)) (lambda (x) (push-frame (state-cont x)))))))
+      ((eq? (while-sym (car pt)) 'while) (interpret (cdr pt) (lambda (v) (eval-while (car pt) (push-frame (state-cont v)) (lambda (a) (push-frame (state-cont a)))))))
+      (else state-cont))
+    (display "\n Interpret State: ")
+    (print (state-cont e-s))
+    )))
+
+;(interpret (cdr (car pt)) (lambda (x) (push-frame (state-cont x))))
+(define begin-scope
+  (lambda (pt state-cont)
+    (interpret pt (lambda (x) (push-frame (state-cont x))))))
 
 (define interpretable?
  (lambda (pt state)
@@ -51,6 +46,9 @@
      (else #f))))
 
 ; Helper Functions
+
+; e-s - empty state. useful for calling state-cont on
+(define e-s '((()())))
 
 ; listOfOne? - returns TRUE if l is a list containing one atom
 (define listOfOne?
@@ -71,7 +69,8 @@
     (cond
       ((null? l) #f)
       ((atom? (car l)) (or (eq? a (car l)) (member* a (cdr l))))
-      (else (or (member* a (car l)) (member* a (cdr l)))))))
+      (else (or (member* a (car l)) (member* a (cdr l)))))
+            ))
 
 ; isUnary - determines if expr is a unary expr or not.
 ; (- 5) is unary
@@ -112,43 +111,18 @@
 ;         var x = 5;
 ;         var x = y; (y is declared, assigned)
 (define decl?
-  (lambda (expr state)
+  (lambda (expr)
     (and (eq? (var-decl expr) 'var)
          (name? (var-name expr))
-         (or (null? (var-tail expr)) ; var-tail is cddr, so is null when expr is like (var x)
-             (value? (var-val expr) state) ; var-val is cadr, so if there is a value like (var x 5) it is that value
-             (bool? (var-val expr) state)))))
+         )))
 
 ; ass? - checks if the expr is a valid assignment statement
 ;        if the ass-var of the expr is not decalred, throw an error
 (define ass?
-  (lambda (expr state)  
-      (and (eq? (ass-op expr) '=)
-           (or (name? (ass-val expr))
-               (value? (ass-val expr) state)
-               (bool? (ass-val expr) state))))) ; this is bool or value 
+  (lambda (expr)  
+      (eq? (ass-op expr) '=)
+           )) ; this is bool or value 
       
-
-; if? - checks if the expr is a valid if statement
-(define if?
-  (lambda (expr state) 
-      (and (eq? (if-sym expr) 'if) (bool? (if-cond expr) state) (interpretable? (cons (if-body expr) '()) state))))
-
-; while? - checks if the expr is a valid while loop statement
-(define while?
-  (lambda (expr state)
-      (and (eq? (while-sym expr) 'while) (bool? (while-cond expr) state) (interpretable? (cons (while-body expr) '()) state))))
-
-; begin? - checks if the expr is a valid begin statement
-(define begin?
-  (lambda (expr state)
-    (begin (print state) (eq? 'begin (car expr)))))
-
-; break? - checks if the expr is a break
-(define break?
-  (lambda (expr)
-    (eq? 'break (car expr))))
-
 ; name? - is the expression a name?
         ; a name is a single atom
 (define name?
@@ -160,9 +134,9 @@
   (lambda (aexpr state)
     (cond 
       ((isAssigned? aexpr state) #t)
-      ((and (isVar? aexpr state) (not (isAssigned? aexpr state))) (error "Error: Attempted to derefernce uninitialized variable"))
-      ((atom? aexpr) (number? aexpr))      
-      ((ass? aexpr state) #t)
+      ((atom? aexpr) (number? aexpr))
+      ((and (name? aexpr) (isVar? aexpr state) (not (isAssigned? aexpr state))) (error "Error: Attempted to derefernce uninitialized variable")) 
+      ((ass? aexpr) #t)
       ((eq? (operator aexpr) '+)
        (and (value? (operand1 aexpr) state)
             (value? (operand2 aexpr) state)))
@@ -209,84 +183,112 @@
                 (bool? (operand2 expr) state))))
       (else #f))))
 
+; eval and state helpers
+
+; isVar? - is this a variable? check current scope first, then recurse
+(define isVar?
+  (lambda (expr state)
+    (cond
+      ((null? state) #f)
+      ((member* expr (state-vars state)) #t)
+      (else (isVar? expr (cdr state))))))
+
+; isAssigned? - is the variable assigned to something?
+(define isAssigned?
+  (lambda (expr state)
+    (cond
+      ((null? state) #f) ; searched all frames and came up empty
+      ((and (isVar? expr state) (not (eq? (deref expr state) '()))) #t) ; 
+      (else (isAssigned? expr (cdr state))))))
+
+; deref - given a variable, find its value in the state
+(define deref
+  (lambda (var state)
+    (cond 
+      ((not (isVar? var state)) (error "Null Reference Error"))
+      ((null? (state-vars state)) (deref var (cdr state))) ; base case of current stack frame
+      ((eq? var (car (state-vars state))) (car (state-values state))) ; found our variable, return it
+      (else (deref var (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '())) (cdr state))))))) ; recurse on the state
+
+; push-frame - push a new frame onto the stack
+;              eventually this will be CPS
+(define push-frame
+  (lambda (state)
+    (cons '(()()) state)))   
+    
 ; eval-type functions
 ; evaluates an expression of a certain type
 
 ; eval-return - evaluates a return expression
 (define eval-return
   (lambda (expr state)
-    (cond
+    (begin (print state) (cond
+      ((isVar? expr state) (deref expr state))
       ((value? expr state) (eval-value expr state))
       ((bool? expr state) (if (eval-bool expr state) "TRUE" "FALSE"))
-      ((isVar? expr state)))))
+      ))))
 
 ; eval-decl - evaluate variable declaration
 ;(if (null? (var-tail expr))
 (define eval-decl
   (lambda (expr state)
-    (if (null? (var-tail expr))
-        (cons (cons (var-name expr) (state-vars state)) (cons (cons '() (state-values state)) '())) ; no value, make it the empty list
-        (cons (cons (var-name expr) (state-vars state)) (cons (cons (eval-bool-or-val (var-val expr) state) (state-values state)) '()))
-        )))
-  
-; eval-ass - evaluate an assignment 
+    (begin0 
+      (if (null? (var-tail expr))
+        (cons (cons (cons (var-name expr) (state-vars state)) (cons (cons '() (state-values state)) '())) (cdr state)) ; no value, make it the empty list
+        (cons (cons (cons (var-name expr) (state-vars state)) (cons (cons (eval-bool-or-val (var-val expr) state) (state-values state)) '())) (cdr state))
+        )
+     ; (display "\n decl state: ")
+      ;(print state)
+      )))
+
+; eval-ass - evaluate an assignment
 (define eval-ass
   (lambda (expr state)
-    (cond
-      ((null? (state-vars state)) (error "Error assigning variable"))
-      ((not (isVar? (ass-var expr) state)) (error "Error: Attempted to assign to undeclared variable")) 
-      ((eq? (ass-var expr) (car (state-vars state))) ; found the variable
-       (cons (state-vars state) 
+    (begin (display state) (cond
+      ((null? state) '())                      
+      ((isVar? (ass-val expr) state) (eval-ass (list (operator expr) (ass-var expr) (deref (ass-val expr) state)) state))
+      ((not (isVar? (ass-var expr) state))(error "Error: Attempted to assign to undeclared variable."))
+      ((null? (state-vars state)) (cons (car state) (eval-ass expr (cdr state)))) ; base case of current state frame
+      ((eq? (ass-var expr) (car (state-vars state))) ; found our variable, return the modified state
+       (cons (cons (state-vars state) 
              (cons (cons (eval-bool-or-val (ass-val expr) state) 
                          (cdr (state-values state)))
-                   '())))
-      (else (cons  ; didn't find the variable, recurse while preserving the state
-             (state-vars state)
-             (cons 
-              (cons (car (state-values state))
-                   (state-values (eval-ass expr (cons 
-                       (cdr (state-vars state))
-                       (cons 
-                        (cdr (state-values state))
-                        '())))))
-              '()))))))
+                   '()))
+             (cdr state)))
+      (else 
+       (cons (cons (cons
+                    (car (state-vars state))
+                    (state-vars (eval-ass expr 
+                                          (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '()))
+                                                (eval-ass expr (cdr state))))))
+                   (cons
+                    (cons
+                     (car (state-values state))
+                     (state-values (eval-ass expr 
+                                             (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '()))
+                                                   (eval-ass expr (cdr state)))))) '()))
+             (cdr (eval-ass expr 
+                            (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '()))
+                                  (eval-ass expr (cdr state))))) ))))))  ; the rest of this frame
 
-; evaluate an if statement
+; eval-if - evaluate an if statement
 (define eval-if
-  (lambda (expr state return-cont break-cont)
-      (if (eval-bool (if-cond expr) state)
-          (interpret (cons (if-body expr) '()) state return-cont break-cont) ; condition is true
-          (if (hasThreeTerms? expr)
-              state
-              (interpret (cons (if-else expr) '()) state return-cont break-cont))))) 
+  (lambda (expr state state-cont)
+    (if
+      (eval-bool (if-cond expr) state) ; condition is true
+      ((interpret (cdr (caddr expr)) state-cont) e-s)
+      (if (hasThreeTerms? expr) ; condition is false - else 
+          state ; no else body - return state
+          ((interpret (cons (if-else expr) '()) state-cont) e-s)) ))) ; interpret else body
   
 ; eval-while - evaluate a while loop
+;              when this is called, a frame has already been pushed
 (define eval-while
-  (lambda (expr state return-cont break-cont)
+  (lambda (expr state state-cont)
     (if 
      (eval-bool (while-cond expr) state)
-     (eval-while expr (interpret (cons (while-body expr) '()) state return-cont break-cont) return-cont break-cont)
-     state)))
-
-; is this a variable?
-; that is, is it in the state?
-(define isVar?
-  (lambda (expr state)
-    (member* expr (state-vars state))))
-
-(define isAssigned?
-  (lambda (expr state)
-    (cond
-      ((not (isVar? expr state)) #f) ; if the variable isn't declared, it's definitely not assigned
-      (else (not (eq? (deref expr state) '()))))))
-
-; deref - given a variable, find its value in the state
-(define deref
-  (lambda (var state)
-    (cond
-      ((not (isVar? var state)) (error "Null reference ehuehuehuhe"))
-      ((eq? (car (state-vars state)) var) (car (state-values state)))
-      (else (deref var (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '())))))))
+     (eval-while expr ((interpret (while-body expr) state-cont) e-s) (interpret (while-body expr) state-cont))
+     (state-cont e-s))))
 
 ; eval-bool-or-val - evaluate an expr of bool or value (numeric) type
 (define eval-bool-or-val
@@ -333,7 +335,7 @@
     (cond
       ((number? expr) expr)
       ((isVar? expr state) (deref expr state))
-      ((ass? expr state) (ass-val expr))
+      ((ass? expr) (ass-val expr)) ; wat
       ((eq? (operator expr) '+) (+ (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       ((eq? (operator expr) '*) (* (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       ((and (isUnary? expr) 
@@ -346,8 +348,8 @@
       (else (error "Unknwn Operator: " (operator expr))))))
 
 ; abstraction of state operators
-(define state-vars car)
-(define state-values cadr)
+(define state-vars (lambda (s) (car (car s))))
+(define state-values (lambda (s) (cadr (car s))))
 
 ; abstraction of var declaration
 (define var-decl car) ; var
@@ -365,7 +367,7 @@
 ; abstraction of while operators
 (define while-sym car)
 (define while-cond cadr)
-(define while-body caddr)
+(define while-body (lambda (e) (cdr (car (cddr e)))))
 
 ; abstraction of assignment
 (define ass-op car)
