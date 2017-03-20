@@ -11,24 +11,34 @@
 ; nested assignment (assignment returns value)
 (define interpret-file
   (lambda (file)
-    (interpret (parser file) (lambda (x) x))))
+    ((interpret (parser file) (lambda (x) x)) e-s)))
 
 (define interpret
   (lambda (pt state-cont)
     (begin0  
     (cond
       ((null? pt) state-cont)
-      ((eq? 'return (car (car pt))) (eval-return (cadr (car pt)) (state-cont e-s)))
+      ((eq? 'return (car (car pt))) (lambda (v) (eval-return (cadr (car pt)) (state-cont v))))
       ((ass? (car pt)) (interpret (cdr pt) (lambda (v) (eval-ass (car pt) (state-cont v)))))
       ((decl? (car pt)) (interpret (cdr pt) (lambda (v) (eval-decl (car pt) (state-cont v)))))
-      ((eq? 'begin (car (car pt))) (interpret (cdr pt) (begin-scope (cdr (car pt)) state-cont)))
+      ((eq? 'begin (car (car pt))) (interpret (cdr pt) (pop-frame-cont (begin-scope (cdr (car pt)) state-cont))))
       ((eq? (if-sym (car pt)) 'if) (interpret (cdr pt) (eval-if (car pt) (state-cont e-s) (lambda (v) (state-cont v)))))
-      ((eq? (while-sym (car pt)) 'while) (interpret (cdr pt) (eval-while (car pt) (state-cont e-s) (lambda (a) (state-cont a)))))
+      ((eq? (while-sym (car pt)) 'while) (interpret (cdr pt) (eval-while (car pt) (push-frame (state-cont e-s)) (push-frame-cont state-cont))))
       (else state-cont))
     (display "\n Interpret State: ")
     (print (state-cont e-s))
+    ;(display "\n Interpret Expr: ")
+    ;(print pt)
     ))) 
 
+(define push-frame-cont
+  (lambda (state-cont)
+    (lambda (x) (push-frame (state-cont x)))))
+
+(define pop-frame-cont
+  (lambda (state-cont)
+    (lambda (x) (pop-frame (state-cont x)))))
+  
 ; begin-scope - push a frame to the stack and evaluate the begin body
 (define begin-scope
   (lambda (pt state-cont)
@@ -211,10 +221,14 @@
       (else (deref var (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '())) (cdr state))))))) ; recurse on the state
 
 ; push-frame - push a new frame onto the stack
-;              eventually this will be CPS
 (define push-frame
   (lambda (state)
-    (cons '(()()) state)))   
+    (cons '(()()) state)))
+
+; pop-frame - pop the first frame off of the stack
+(define pop-frame
+  (lambda (state)
+    (cdr state)))
     
 ; eval-type functions
 ; evaluates an expression of a certain type
@@ -226,7 +240,7 @@
       ((isVar? expr state) (deref expr state))
       ((value? expr state) (eval-value expr state))
       ((bool? expr state) (if (eval-bool expr state) "TRUE" "FALSE"))
-      )))
+      (else (error "Error returning")))))
 
 ; eval-decl - evaluate variable declaration
 ;(if (null? (var-tail expr))
@@ -276,7 +290,7 @@
   (lambda (expr state state-cont)
     (if
       (eval-bool (if-cond expr) state) ; condition is true
-      (interpret (cdr (caddr expr)) state-cont)
+      (interpret (cons (caddr expr) '()) state-cont)
       (if (hasThreeTerms? expr) ; condition is false - else 
           state-cont ; no else body - return state
           (interpret (if-elsex expr) state-cont)) ))) ; interpret else body
