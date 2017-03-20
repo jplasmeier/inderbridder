@@ -22,14 +22,14 @@
       ((ass? (car pt)) (interpret (cdr pt) (lambda (v) (eval-ass (car pt) (state-cont v)))))
       ((decl? (car pt)) (interpret (cdr pt) (lambda (v) (eval-decl (car pt) (state-cont v)))))
       ((eq? 'begin (car (car pt))) (interpret (cdr pt) (begin-scope (cdr (car pt)) state-cont)))
-      ((eq? (if-sym (car pt)) 'if) (interpret (cdr pt) (lambda (v) (eval-if (car pt) (push-frame (state-cont v)) (lambda (x) (push-frame (state-cont x)))))))
-      ((eq? (while-sym (car pt)) 'while) (interpret (cdr pt) (lambda (v) (eval-while (car pt) (push-frame (state-cont v)) (lambda (a) (push-frame (state-cont a)))))))
+      ((eq? (if-sym (car pt)) 'if) (interpret (cdr pt) (eval-if (car pt) (state-cont e-s) (lambda (v) (state-cont v)))))
+      ((eq? (while-sym (car pt)) 'while) (interpret (cdr pt) (eval-while (car pt) (state-cont e-s) (lambda (a) (state-cont a)))))
       (else state-cont))
     (display "\n Interpret State: ")
     (print (state-cont e-s))
-    )))
+    ))) 
 
-;(interpret (cdr (car pt)) (lambda (x) (push-frame (state-cont x))))
+; begin-scope - push a frame to the stack and evaluate the begin body
 (define begin-scope
   (lambda (pt state-cont)
     (interpret pt (lambda (x) (push-frame (state-cont x))))))
@@ -222,11 +222,11 @@
 ; eval-return - evaluates a return expression
 (define eval-return
   (lambda (expr state)
-    (begin (print state) (cond
+    (cond
       ((isVar? expr state) (deref expr state))
       ((value? expr state) (eval-value expr state))
       ((bool? expr state) (if (eval-bool expr state) "TRUE" "FALSE"))
-      ))))
+      )))
 
 ; eval-decl - evaluate variable declaration
 ;(if (null? (var-tail expr))
@@ -244,7 +244,7 @@
 ; eval-ass - evaluate an assignment
 (define eval-ass
   (lambda (expr state)
-    (begin (display state) (cond
+    (cond
       ((null? state) '())                      
       ((isVar? (ass-val expr) state) (eval-ass (list (operator expr) (ass-var expr) (deref (ass-val expr) state)) state))
       ((not (isVar? (ass-var expr) state))(error "Error: Attempted to assign to undeclared variable."))
@@ -269,17 +269,17 @@
                                                    (eval-ass expr (cdr state)))))) '()))
              (cdr (eval-ass expr 
                             (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '()))
-                                  (eval-ass expr (cdr state))))) ))))))  ; the rest of this frame
+                                  (eval-ass expr (cdr state))))) )))))  ; the rest of this frame
 
 ; eval-if - evaluate an if statement
 (define eval-if
   (lambda (expr state state-cont)
     (if
       (eval-bool (if-cond expr) state) ; condition is true
-      ((interpret (cdr (caddr expr)) state-cont) e-s)
+      (interpret (cdr (caddr expr)) state-cont)
       (if (hasThreeTerms? expr) ; condition is false - else 
-          state ; no else body - return state
-          ((interpret (cons (if-else expr) '()) state-cont) e-s)) ))) ; interpret else body
+          state-cont ; no else body - return state
+          (interpret (if-elsex expr) state-cont)) ))) ; interpret else body
   
 ; eval-while - evaluate a while loop
 ;              when this is called, a frame has already been pushed
@@ -288,7 +288,7 @@
     (if 
      (eval-bool (while-cond expr) state)
      (eval-while expr ((interpret (while-body expr) state-cont) e-s) (interpret (while-body expr) state-cont))
-     (state-cont e-s))))
+     state-cont)))
 
 ; eval-bool-or-val - evaluate an expr of bool or value (numeric) type
 (define eval-bool-or-val
@@ -362,7 +362,7 @@
 (define if-sym car)
 (define if-cond cadr)
 (define if-body caddr)
-(define if-else cadddr)
+(define if-elsex cdddr)
 
 ; abstraction of while operators
 (define while-sym car)
