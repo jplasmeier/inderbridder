@@ -85,14 +85,6 @@
 ; e-s - empty state. useful for calling state-cont on
 (define e-s '((()())))
 
-; listOfOne? - returns TRUE if l is a list containing one atom
-(define listOfOne?
-  (lambda (l)
-    (cond
-      ((null? l) #f)
-      ((and (or (atom? (car l)) (list? (car l))) (null? (cdr l))) #t)
-      (else #f))))
-
 ; atom? - returns TRUE when a is an atom
 (define atom?
   (lambda (a)
@@ -136,33 +128,11 @@
 ; expr-type?
 ; functions which determine the type of an expression
 
-; return? - determines if the expression is a return
-(define return?
-  (lambda (expr state)
-    (and (eq? (car expr) 'return) (or (bool? (cadr expr) state) (value? (cadr expr) state))))) 
-
-; decl? - is the expression a declaration?
-;         var x;
-;         var x = 5;
-;         var x = y; (y is declared, assigned)
-(define decl?
-  (lambda (expr)
-    (and (eq? (var-decl expr) 'var)
-         (name? (var-name expr))
-         )))
-
 ; ass? - checks if the expr is a valid assignment statement
 ;        if the ass-var of the expr is not decalred, throw an error
 (define ass?
   (lambda (expr)  
-      (eq? (ass-op expr) '=)
-           )) ; this is bool or value 
-      
-; name? - is the expression a name?
-        ; a name is a single atom
-(define name?
-  (lambda (expr)
-    (or (atom? expr) (and (not (or (number? expr) (number? (car expr)))) (or (listOfOne? expr) (eq? (cdr expr) (cadr expr)))))))
+      (eq? (ass-op expr) '=)))
 
 ; value? - is the expr able to be evaluated by value? 
 (define value?
@@ -170,7 +140,7 @@
     (cond 
       ((isAssigned? aexpr state) #t)
       ((atom? aexpr) (number? aexpr))
-      ((and (name? aexpr) (isVar? aexpr state) (not (isAssigned? aexpr state))) (error "Error: Attempted to derefernce uninitialized variable")) 
+      ((and (isVar? aexpr state) (not (isAssigned? aexpr state))) (error "Error: Attempted to derefernce uninitialized variable")) 
       ((ass? aexpr) #t)
       ((eq? (operator aexpr) '+)
        (and (value? (operand1 aexpr) state)
@@ -257,15 +227,6 @@
     
 ; eval-type functions
 ; evaluates an expression of a certain type
-
-; eval-return - evaluates a return expression
-(define eval-return
-  (lambda (expr state)
-    (cond
-      ((isVar? expr state) (deref expr state))
-      ((value? expr state) (eval-value expr state))
-      ((bool? expr state) (if (eval-bool expr state) "TRUE" "FALSE"))
-      (else (error "Error returning")))))
 
 ; eval-decl - evaluate variable declaration
 ;(if (null? (var-tail expr))
