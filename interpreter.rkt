@@ -2,10 +2,7 @@
 ; A simple interpreter for a basic language
 ; J. Plasmeier | jgp45@case.edu
 ; 02/13/2017
-
 (load "simpleParser.scm")
-(load "lex.scm") ; parser dependency 
-(require racket/trace)
 
 ; interpreter-file - parsers a file and interprets its code
 (define interpret-file
@@ -165,7 +162,7 @@
 (define bool?
   (lambda (expr state)
     (cond
-      ((atom? expr) (or (eq? expr 'TRUE) (eq? expr 'true) (eq? expr 'FALSE) (eq? expr 'false)) ) ; if it's an atom, it must be 'TRUE or 'FALSE or a variable 0_0
+      ((atom? expr) (or (eq? expr 'TRUE) (eq? expr 'true) (eq? expr "TRUE") (eq? expr 'FALSE) (eq? expr 'false) (eq? expr "FALSE")) ) ; if it's an atom, it must be 'TRUE or 'FALSE or a variable 0_0
       ((eq? (operator expr) '!)
        (or
         (isVar? (operand1 expr) state)
@@ -287,8 +284,8 @@
   (lambda (expr state)
     (cond
       ((number? expr) (not (zero? expr))) ; any non-zero number is considered TRUE
-      ((or (eq? expr 'TRUE) (eq? expr 'true)))
-      ((or (eq? expr 'FALSE) (eq? expr 'false)) #f)
+      ((or (eq? expr 'TRUE) (eq? expr 'true) (eq? expr "TRUE")))
+      ((or (eq? expr 'FALSE) (eq? expr 'false) (eq? expr "FALSE")) #f)
       ((atom? expr) #t) ; hmmm, what should general atoms evaluate to? probably tHEIR VALUE IN the STAtE.
       ((eq? (operator expr) '>) (> (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       ((eq? (operator expr) '<) (< (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
