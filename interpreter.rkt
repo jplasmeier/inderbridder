@@ -43,40 +43,6 @@
       ((eq? (car l) '=) (lambda (v) (eval-ass l (state-cont v))))
       (else (error "err: fell thru")) )))
 
-(define eval-begin
-  (lambda (expr state-cont return continue break)
-    (if (null? expr)
-        state-cont
-        (eval-begin (cdr expr) (evaluate (car expr) state-cont return continue break) return continue break))))
-
-(define eval-if
-  (lambda (expr state-cont return continue break)
-    (if (eval-bool (if-cond expr) (state-cont e-s))
-        (evaluate (caddr expr) state-cont return continue break)
-        (if (hasThreeTerms? expr)
-            state-cont
-            (evaluate (if-elsex expr) state-cont return continue break)))))
-
-(define eval-while
-  (lambda (expr state-cont return continue break)
-    (if (eval-bool (while-cond expr) (state-cont e-s))
-        (eval-while expr 
-                    (call/cc
-                     (lambda (continue-here)
-                       (evaluate (caddr expr) state-cont return continue-here break))) 
-                    return
-                    continue
-                    break)
-        state-cont)))
-
-(define push-frame-cont
-  (lambda (state-cont)
-    (lambda (x) (push-frame (state-cont x)))))
-
-(define pop-frame-cont
-  (lambda (state-cont)
-    (lambda (x) (pop-frame (state-cont x)))))
-
 ; Helper Functions
 
 ; e-s - empty state. useful for calling state-cont on
@@ -162,7 +128,7 @@
 (define bool?
   (lambda (expr state)
     (cond
-      ((atom? expr) (or (eq? expr 'TRUE) (eq? expr 'true) (eq? expr "TRUE") (eq? expr 'FALSE) (eq? expr 'false) (eq? expr "FALSE")) ) ; if it's an atom, it must be 'TRUE or 'FALSE or a variable 0_0
+      ((atom? expr) (or (eq? expr 'true) (eq? expr "TRUE") (eq? expr 'false) (eq? expr "FALSE")) ) ; if it's an atom, it must be 'TRUE or 'FALSE or a variable 0_0
       ((eq? (operator expr) '!)
        (or
         (isVar? (operand1 expr) state)
@@ -174,15 +140,15 @@
       ((eq? (operator expr) '<=) (valid-expr-bool? expr state))
       ((eq? (operator expr) '>=) (valid-expr-bool? expr state))
       ((eq? (operator expr) '!=)
-       (or (and (value? (operand1 expr) state)
-                (value? (operand2 expr) state))
-           (and (bool? (operand1 expr) state)
-                (bool? (operand2 expr) state))))
+       (or (and (bool? (operand1 expr) state)
+                (bool? (operand2 expr) state))
+           (and (value? (operand1 expr) state)
+                (value? (operand2 expr) state))))
       ((eq? (operator expr) '==)
-       (or (and (value? (operand1 expr) state)
-                (value? (operand2 expr) state))
-           (and (bool? (operand1 expr) state)
-                (bool? (operand2 expr) state))))
+       (or (and (bool? (operand1 expr) state)
+                (bool? (operand2 expr) state))
+           (and (value? (operand1 expr) state)
+                (value? (operand2 expr) state))))
       (else #f))))
 
 ; eval and state helpers
@@ -221,53 +187,109 @@
 (define pop-frame
   (lambda (state)
     (cdr state)))
-    
+
+(define push-frame-cont
+  (lambda (state-cont)
+    (lambda (x) (push-frame (state-cont x)))))
+
+(define pop-frame-cont
+  (lambda (state-cont)
+    (lambda (x) (pop-frame (state-cont x)))))
+
 ; eval-type functions
 ; evaluates an expression of a certain type
 
 ; eval-decl - evaluate variable declaration
 ;(if (null? (var-tail expr))
 (define eval-decl
-  (lambda (expr state)
-    (begin0 
-      (if (null? (var-tail expr))
-        (cons (cons (cons (var-name expr) (state-vars state)) (cons (cons '() (state-values state)) '())) (cdr state)) ; no value, make it the empty list
-        (cons (cons (cons (var-name expr) (state-vars state)) (cons (cons (eval-bool-or-val (var-val expr) state) (state-values state)) '())) (cdr state))
+  (lambda (expr state) 
+      (if (null? (var-tail expr)) ; is there no value provided?
+        (cons ; then declare to empty list
+         (cons 
+          (cons (var-name expr) (state-vars state)) ; add the name
+          (cons (cons '() (state-values state)) '())) ; no value, make it the empty list
+         (cdr state)) 
+        (cons ; else declare to its value
+         (cons 
+          (cons (var-name expr) (state-vars state)) ; add the name
+          (cons (cons (eval-bool-or-val (var-val expr) state) (state-values state)) '())) ; evaluate the value expression and add it
+         (cdr state))
         )
-     ; (display "\n decl state: ")
-      ;(print state)
-      )))
+      ))
 
 ; eval-ass - evaluate an assignment
 (define eval-ass
   (lambda (expr state)
     (cond
       ((null? state) '())                      
-      ((isVar? (ass-val expr) state) (eval-ass (list (operator expr) (ass-var expr) (deref (ass-val expr) state)) state))
-      ((not (isVar? (ass-var expr) state))(error "Error: Attempted to assign to undeclared variable."))
+      ((isVar? (ass-val expr) state) (eval-ass (list (operator expr) (ass-var expr) (deref (ass-val expr) state)) state)) ; when assigning a variable to a variable, deref first
+      ((not (isVar? (ass-var expr) state)) (error "Error: Attempted to assign to undeclared variable."))
       ((null? (state-vars state)) (cons (car state) (eval-ass expr (cdr state)))) ; base case of current state frame
       ((eq? (ass-var expr) (car (state-vars state))) ; found our variable, return the modified state
-       (cons (cons (state-vars state) 
-             (cons (cons (eval-bool-or-val (ass-val expr) state) 
-                         (cdr (state-values state)))
-                   '()))
-             (cdr state)))
+       (cons ; cons state variables onto the cons of state-values onto '()
+        (cons (state-vars state) ; the state variables
+              (cons 
+               (cons (eval-bool-or-val (ass-val expr) state) ; add the value to the cdr of state-values
+                     (cdr (state-values state)))
+               '()))
+        (cdr state)))
       (else 
-       (cons (cons (cons
-                    (car (state-vars state))
-                    (state-vars (eval-ass expr 
-                                          (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '()))
-                                                (eval-ass expr (cdr state))))))
-                   (cons
-                    (cons
-                     (car (state-values state))
-                     (state-values (eval-ass expr 
-                                             (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '()))
-                                                   (eval-ass expr (cdr state)))))) '()))
-             (cdr (eval-ass expr 
-                            (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '()))
-                                  (eval-ass expr (cdr state))))) )))))  ; the rest of this frame
+       (cons 
+        (cons 
+         (cons ; state-vars of the current frame
+          (car (state-vars state))
+          (state-vars (eval-ass expr 
+                                (cons 
+                                 (cons 
+                                  (cdr (state-vars state)) 
+                                  (cons 
+                                   (cdr (state-values state)) 
+                                   '()))
+                                 (eval-ass expr (cdr state))))))
+         (cons ; state-values of the current frame
+          (cons
+           (car (state-values state))
+           (state-values (eval-ass expr 
+                                   (cons 
+                                    (cons 
+                                     (cdr (state-vars state)) 
+                                     (cons 
+                                      (cdr (state-values state)) 
+                                      '()))
+                                    (eval-ass expr (cdr state)))))) '()))
+        (cdr (eval-ass expr ; the result of recursing on the cdr of the state
+                       (cons 
+                        (cons (cdr (state-vars state)) 
+                              (cons 
+                               (cdr (state-values state)) 
+                               '()))
+                        (eval-ass expr (cdr state))))) )))))  ; the rest of this frame
 
+(define eval-begin
+  (lambda (expr state-cont return continue break)
+    (if (null? expr)
+        state-cont
+        (eval-begin (cdr expr) (evaluate (car expr) state-cont return continue break) return continue break))))
+
+(define eval-if
+  (lambda (expr state-cont return continue break)
+    (if (eval-bool (if-cond expr) (state-cont e-s))
+        (evaluate (caddr expr) state-cont return continue break)
+        (if (hasThreeTerms? expr)
+            state-cont
+            (evaluate (if-elsex expr) state-cont return continue break)))))
+
+(define eval-while
+  (lambda (expr state-cont return continue break)
+    (if (eval-bool (while-cond expr) (state-cont e-s))
+        (eval-while expr 
+                    (call/cc
+                     (lambda (continue-here)
+                       (evaluate (caddr expr) state-cont return continue-here break))) 
+                    return
+                    continue
+                    break)
+        state-cont)))
 
 ; eval-bool-or-val - evaluate an expr of bool or value (numeric) type
 (define eval-bool-or-val
@@ -286,23 +308,15 @@
       ((number? expr) (not (zero? expr))) ; any non-zero number is considered TRUE
       ((or (eq? expr 'TRUE) (eq? expr 'true) (eq? expr "TRUE")))
       ((or (eq? expr 'FALSE) (eq? expr 'false) (eq? expr "FALSE")) #f)
-      ((atom? expr) #t) ; hmmm, what should general atoms evaluate to? probably tHEIR VALUE IN the STAtE.
+      ((atom? expr) #t)
       ((eq? (operator expr) '>) (> (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       ((eq? (operator expr) '<) (< (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       ((eq? (operator expr) '>=) (>= (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       ((eq? (operator expr) '<=) (<= (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
-      ((eq? (operator expr) '==) (eq? (if (value? (operand1 expr) state)
-                                          (eval-value (operand1 expr) state) 
-                                          (eval-bool (operand1 expr) state)); these are tricky - could be bool OR value
-                                      (if (value? (operand2 expr) state) 
-                                          (eval-value (operand2 expr) state) 
-                                          (eval-bool (operand2 expr) state))))
-      ((eq? (operator expr) '!=)  (not (eq? (if (value? (operand1 expr) state)
-                                               (eval-value (operand1 expr) state) 
-                                               (eval-bool (operand1 expr) state))
-                                           (if (value? (operand2 expr) state) 
-                                               (eval-value (operand2 expr) state) 
-                                               (eval-bool (operand2 expr) state)))))
+      ((eq? (operator expr) '==) (eq? (eval-value (operand1 expr) state)
+                                      (eval-value (operand2 expr) state)))
+      ((eq? (operator expr) '!=)  (not (eq? (eval-value (operand1 expr) state) 
+                                            (eval-value (operand2 expr) state))))
       ((eq? (operator expr) '||) (or (eval-bool (operand1 expr) state) (eval-bool (operand2 expr) state))) 
       ((eq? (operator expr) '&&) (and (eval-bool (operand1 expr) state) (eval-bool (operand2 expr) state))) 
       ((eq? (operator expr) '!) (not (eval-bool (operand1 expr) state)))
@@ -314,7 +328,7 @@
     (cond
       ((number? expr) expr)
       ((isVar? expr state) (deref expr state))
-      ((ass? expr) (ass-val expr)) ; wat
+      ((ass? expr) (ass-val expr)) ; side effects?
       ((eq? (operator expr) '+) (+ (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       ((eq? (operator expr) '*) (* (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       ((and (isUnary? expr) 
@@ -335,7 +349,6 @@
 (define var-name cadr) ; x
 (define var-val caddr) ; the value after x
 (define var-tail cddr) ; anything after x - can check nullity 
-
 
 ; abstraction of if operators
 (define if-sym car)
