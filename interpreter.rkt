@@ -15,43 +15,61 @@
 (define interpret
   (lambda (l)
     (call/cc ; creates a break with the current control context: the state at this time, including the call stack
-     (lambda (break)
+     (lambda (return-here)
        (letrec ((loop (lambda (l state-cont)
-                        (loop (cdr l) (evaluate (car l) state-cont break))
+                        (loop (cdr l) (evaluate (car l) 
+                                                state-cont 
+                                                return-here 
+                                                (lambda (e) (error "Error: continue called outside of while body"))
+                                                (lambda (e) (error "Error: break called outside scoped block"))))
                         )))
                 (loop l (lambda (x) x)))
        ))))
 
 (define evaluate
-  (lambda (l state-cont return)
+  (lambda (l state-cont return continue break)
     (cond
       ((null? l) e-s)
-      ((eq? (car l) 'return) (return (deref (cadr l) (state-cont e-s))))
-      ((eq? (car l) 'begin) (pop-frame-cont (eval-begin (cdr l) (push-frame-cont state-cont) return)))
-      ((eq? (car l) 'if) (eval-if l state-cont return))
-      ((eq? (car l) 'while) (eval-while l state-cont return))
+      ((eq? (car l) 'return) (return (eval-bool-or-val (cadr l) (state-cont e-s))))
+      ((eq? (car l) 'begin) (pop-frame-cont (eval-begin (cdr l) 
+                                                        (push-frame-cont state-cont) 
+                                                        return 
+                                                        (lambda (c) (continue (pop-frame-cont c))) 
+                                                        (lambda (b) (break (pop-frame-cont b))))))
+      ((eq? (car l) 'break) (break state-cont))
+      ((eq? (car l) 'if) (eval-if l state-cont return continue break))
+      ((eq? (car l) 'while) (call/cc
+                             (lambda (break-here)
+                               (eval-while l state-cont return continue break-here))))
+      ((eq? (car l) 'continue) (continue state-cont))
       ((eq? (car l) 'var) (lambda (v) (eval-decl l (state-cont v))))
       ((eq? (car l) '=) (lambda (v) (eval-ass l (state-cont v))))
       (else (error "err: fell thru")) )))
 
 (define eval-begin
-  (lambda (expr state-cont return)
+  (lambda (expr state-cont return continue break)
     (if (null? expr)
         state-cont
-        (eval-begin (cdr expr) (evaluate (car expr) state-cont return) return))))
+        (eval-begin (cdr expr) (evaluate (car expr) state-cont return continue break) return continue break))))
 
 (define eval-if
-  (lambda (expr state-cont return)
+  (lambda (expr state-cont return continue break)
     (if (eval-bool (if-cond expr) (state-cont e-s))
-        (evaluate (caddr expr) state-cont return)
+        (evaluate (caddr expr) state-cont return continue break)
         (if (hasThreeTerms? expr)
             state-cont
-            (evaluate (if-elsex expr) state-cont return)))))
+            (evaluate (if-elsex expr) state-cont return continue break)))))
 
 (define eval-while
-  (lambda (expr state-cont return)
+  (lambda (expr state-cont return continue break)
     (if (eval-bool (while-cond expr) (state-cont e-s))
-        (eval-while expr (evaluate (caddr expr) state-cont return) return)
+        (eval-while expr 
+                    (call/cc
+                     (lambda (continue-here)
+                       (evaluate (caddr expr) state-cont return continue-here break))) 
+                    return
+                    continue
+                    break)
         state-cont)))
 
 (define push-frame-cont
