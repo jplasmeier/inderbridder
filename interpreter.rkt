@@ -7,29 +7,52 @@
 (load "lex.scm") ; parser dependency 
 (require racket/trace)
 
-; interpreter TODO
-; nested assignment (assignment returns value)
+; interpreter-file - parsers a file and interprets its code
 (define interpret-file
   (lambda (file)
-    ((interpret (parser file) (lambda (x) x)) e-s)))
+    (interpret (parser file))))
 
 (define interpret
-  (lambda (pt state-cont)
-    (begin0  
+  (lambda (l)
+    (call/cc ; creates a break with the current control context: the state at this time, including the call stack
+     (lambda (break)
+       (letrec ((loop (lambda (l state-cont)
+                        (loop (cdr l) (evaluate (car l) state-cont break))
+                        )))
+                (loop l (lambda (x) x)))
+       ))))
+
+(define evaluate
+  (lambda (l state-cont return)
     (cond
-      ((null? pt) state-cont)
-      ((eq? 'return (car (car pt))) (lambda (v) (eval-return (cadr (car pt)) (state-cont v))))
-      ((ass? (car pt)) (interpret (cdr pt) (lambda (v) (eval-ass (car pt) (state-cont v)))))
-      ((decl? (car pt)) (interpret (cdr pt) (lambda (v) (eval-decl (car pt) (state-cont v)))))
-      ((eq? 'begin (car (car pt))) (interpret (cdr pt) (pop-frame-cont (begin-scope (cdr (car pt)) state-cont))))
-      ((eq? (if-sym (car pt)) 'if) (interpret (cdr pt) (eval-if (car pt) (state-cont e-s) (lambda (v) (state-cont v)))))
-      ((eq? (while-sym (car pt)) 'while) (interpret (cdr pt) (eval-while (car pt) (push-frame (state-cont e-s)) (push-frame-cont state-cont))))
-      (else state-cont))
-    (display "\n Interpret State: ")
-    (print (state-cont e-s))
-    ;(display "\n Interpret Expr: ")
-    ;(print pt)
-    ))) 
+      ((null? l) e-s)
+      ((eq? (car l) 'return) (return (deref (cadr l) (state-cont e-s))))
+      ((eq? (car l) 'begin) (pop-frame-cont (eval-begin (cdr l) (push-frame-cont state-cont) return)))
+      ((eq? (car l) 'if) (eval-if l state-cont return))
+      ((eq? (car l) 'while) (eval-while l state-cont return))
+      ((eq? (car l) 'var) (lambda (v) (eval-decl l (state-cont v))))
+      ((eq? (car l) '=) (lambda (v) (eval-ass l (state-cont v))))
+      (else (error "err: fell thru")) )))
+
+(define eval-begin
+  (lambda (expr state-cont return)
+    (if (null? expr)
+        state-cont
+        (eval-begin (cdr expr) (evaluate (car expr) state-cont return) return))))
+
+(define eval-if
+  (lambda (expr state-cont return)
+    (if (eval-bool (if-cond expr) (state-cont e-s))
+        (evaluate (caddr expr) state-cont return)
+        (if (hasThreeTerms? expr)
+            state-cont
+            (evaluate (if-elsex expr) state-cont return)))))
+
+(define eval-while
+  (lambda (expr state-cont return)
+    (if (eval-bool (while-cond expr) (state-cont e-s))
+        (eval-while expr (evaluate (caddr expr) state-cont return) return)
+        state-cont)))
 
 (define push-frame-cont
   (lambda (state-cont)
@@ -38,22 +61,6 @@
 (define pop-frame-cont
   (lambda (state-cont)
     (lambda (x) (pop-frame (state-cont x)))))
-  
-; begin-scope - push a frame to the stack and evaluate the begin body
-(define begin-scope
-  (lambda (pt state-cont)
-    (interpret pt (lambda (x) (push-frame (state-cont x))))))
-
-(define interpretable?
- (lambda (pt state)
-   (cond
-     ((null? pt) #t)
-     ((or (decl? (car pt) state)
-          (ass? (car pt) state)
-          (if? (car pt) state)
-          (while? (car pt) state)
-          (return? (car pt) state)))
-     (else #f))))
 
 ; Helper Functions
 
@@ -285,24 +292,6 @@
                             (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '()))
                                   (eval-ass expr (cdr state))))) )))))  ; the rest of this frame
 
-; eval-if - evaluate an if statement
-(define eval-if
-  (lambda (expr state state-cont)
-    (if
-      (eval-bool (if-cond expr) state) ; condition is true
-      (interpret (cons (caddr expr) '()) state-cont)
-      (if (hasThreeTerms? expr) ; condition is false - else 
-          state-cont ; no else body - return state
-          (interpret (if-elsex expr) state-cont)) ))) ; interpret else body
-  
-; eval-while - evaluate a while loop
-;              when this is called, a frame has already been pushed
-(define eval-while
-  (lambda (expr state state-cont)
-    (if 
-     (eval-bool (while-cond expr) state)
-     (eval-while expr ((interpret (while-body expr) state-cont) e-s) (interpret (while-body expr) state-cont))
-     state-cont)))
 
 ; eval-bool-or-val - evaluate an expr of bool or value (numeric) type
 (define eval-bool-or-val
@@ -376,7 +365,7 @@
 (define if-sym car)
 (define if-cond cadr)
 (define if-body caddr)
-(define if-elsex cdddr)
+(define if-elsex cadddr)
 
 ; abstraction of while operators
 (define while-sym car)
