@@ -18,30 +18,81 @@
                                                 state-cont 
                                                 return-here 
                                                 (lambda (e) (error "Error: continue called outside of while body"))
-                                                (lambda (e) (error "Error: break called outside scoped block"))))
+                                                (lambda (e) (error "Error: break called outside scoped block"))
+                                                (lambda (t e) (error "Error: throw called outside of try block"))))
                         )))
                 (loop l (lambda (x) x)))
        ))))
 
 (define evaluate
-  (lambda (l state-cont return continue break)
+  (lambda (l state-cont return continue break throw)
     (cond
       ((null? l) e-s)
-      ((eq? (car l) 'return) (return (eval-bool-or-val (cadr l) (state-cont e-s))))
-      ((eq? (car l) 'begin) (pop-frame-cont (eval-begin (cdr l) 
+      ((eq? (operator l) 'return) (return (eval-bool-or-val (cadr l) (state-cont e-s))))
+      ((eq? (operator l) 'begin) (pop-frame-cont (eval-begin (cdr l) 
                                                         (push-frame-cont state-cont) 
                                                         return 
                                                         (lambda (c) (continue (pop-frame-cont c))) 
-                                                        (lambda (b) (break (pop-frame-cont b))))))
-      ((eq? (car l) 'break) (break state-cont))
-      ((eq? (car l) 'if) (eval-if l state-cont return continue break))
-      ((eq? (car l) 'while) (call/cc
-                             (lambda (break-here)
-                               (eval-while l state-cont return continue break-here))))
-      ((eq? (car l) 'continue) (continue state-cont))
-      ((eq? (car l) 'var) (lambda (v) (eval-decl l (state-cont v))))
-      ((eq? (car l) '=) (lambda (v) (eval-ass l (state-cont v))))
+                                                        (lambda (b) (break (pop-frame-cont b)))
+                                                        (lambda (t e) (throw (pop-frame-cont t) e)))))
+      ((eq? (operator l) 'break) (break state-cont))
+      ((eq? (operator l) 'throw) (throw state-cont (eval-bool-or-val (operand1 l) (state-cont e-s))))
+      ((eq? (operator l) 'if) (eval-if l state-cont return continue break throw))
+      ((eq? (operator l) 'while) (call/cc
+                                  (lambda (break-here)
+                                    (eval-while l state-cont return continue break-here throw))))
+      ((eq? (operator l) 'continue) (continue state-cont))
+      ;((eq? (operator l) 'finally) (eval-finally l state-cont return continue break throw))
+      ((eq? (operator l) 'try) (eval-finally l state-cont return continue break throw))
+      ((eq? (operator l) 'var) (lambda (v) (eval-decl l (state-cont v))))
+      ((eq? (operator l) '=) (lambda (v) (eval-ass l (state-cont v))))
       (else (error "err: fell thru")) )))
+
+(define eval-finally
+  (lambda (expr state-cont return continue break throw)
+    (if (null? (cadddr expr)) ; is there a finally block?
+        (if (null? (caddr expr)) ; no finally, but is there a catch block?
+            (eval-try expr state-cont return continue break throw) ; no catch or finally, just eval-try
+            (call/cc  ; catch but no finally
+             (lambda (throw-here)
+               (eval-try (cadr expr) 
+                         (push-frame-cont state-cont) 
+                         return 
+                         (lambda (c) (continue (pop-frame-cont c)))
+                         (lambda (b) (break (pop-frame-cont b)))
+                         (lambda (t e) (throw-here (eval-catch (catch-body expr)
+                                                               (lambda (c) (eval-decl (list 'var (catch-var expr) e) ((eval-try expr state-cont return continue break throw-here) c)))
+                                                               return
+                                                               (lambda (c) (continue (pop-frame-cont c))) 
+                                                               (lambda (b) (break (pop-frame-cont b)))
+                                                               (lambda (t e) (throw (pop-frame-cont t) e)))))))))
+        (if (null? (caddr expr)) ; is there a catch block?
+            (evaluate (finally-block expr) (call/cc ; no catch
+                                            (lambda (throw-here)
+                                              (eval-try expr state-cont return continue break throw-here))) return continue break throw) ; finally but not catch
+            (evaluate (finally-block expr) ; yes catch
+                            (call/cc
+                             (lambda (throw-here)
+                               (eval-catch expr 
+                                           (lambda (c) (eval-decl (list 'var (catch-var expr) e) ((eval-try expr state-cont return continue break throw-here) c))) 
+                                           return continue break throw-here)))
+                            return continue break throw)))))
+
+(define eval-catch
+  (lambda (expr state-cont return continue break throw)
+    (evaluate (catch-block expr) state-cont return continue break throw)))
+
+(define eval-try 
+ (lambda (expr state-cont return continue break throw)
+   (evaluate (try-block expr) state-cont return continue break throw)))
+               
+; eval-try - evaluates a try body like such: 
+; (try
+;   ((while (< x 10000) (begin (= result (- result 1)) (= x (+ x 10)) (if (> x 1000) (begin (throw x)) (if (> x 100) (begin (break)))))))
+;   ()
+;   (finally ((= result (+ result x)))))
+
+      
 
 ; Helper Functions
 
@@ -87,114 +138,6 @@
           (number? (operand1 expr))
           (value? (operand1 expr))
         (bool? (operand2 expr) state)))))
-
-; expr-type?
-; functions which determine the type of an expression
-
-; ass? - checks if the expr is a valid assignment statement
-;        if the ass-var of the expr is not decalred, throw an error
-(define ass?
-  (lambda (expr)  
-      (eq? (ass-op expr) '=)))
-
-; value? - is the expr able to be evaluated by value? 
-(define value?
-  (lambda (aexpr state)
-    (cond 
-      ((isAssigned? aexpr state) #t)
-      ((atom? aexpr) (number? aexpr))
-      ((and (isVar? aexpr state) (not (isAssigned? aexpr state))) (error "Error: Attempted to derefernce uninitialized variable")) 
-      ((ass? aexpr) #t)
-      ((eq? (operator aexpr) '+)
-       (and (value? (operand1 aexpr) state)
-            (value? (operand2 aexpr) state)))
-      ((eq? (operator aexpr) '-)
-       (or
-        (value? (operand1 aexpr) state)
-        (and (value? (operand1 aexpr) state)
-            (value? (operand2 aexpr) state))))
-      ((eq? (operator aexpr) '*)
-       (and (value? (operand1 aexpr) state)
-            (value? (operand2 aexpr) state)))
-      ((eq? (operator aexpr) '/)
-       (and (value? (operand1 aexpr) state)
-            (value? (operand2 aexpr) state)))
-      ((eq? (operator aexpr) '%)
-       (and (value? (operand1 aexpr) state)
-            (value? (operand2 aexpr) state)))
-      (else #f))))
-
-; bool? - is the expr able to be evaluated by eval-bool?
-(define bool?
-  (lambda (expr state)
-    (cond
-      ((atom? expr) (or (eq? expr 'true) (eq? expr "TRUE") (eq? expr 'false) (eq? expr "FALSE")) ) ; if it's an atom, it must be 'TRUE or 'FALSE or a variable 0_0
-      ((eq? (operator expr) '!)
-       (or
-        (isVar? (operand1 expr) state)
-        (bool? (operand1 expr) state)))
-      ((eq? (operator expr) '||) (valid-expr-bool? expr state)) ; (valid-expr (op expr state)
-      ((eq? (operator expr) '&&) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '>) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '<) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '<=) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '>=) (valid-expr-bool? expr state))
-      ((eq? (operator expr) '!=)
-       (or (and (bool? (operand1 expr) state)
-                (bool? (operand2 expr) state))
-           (and (value? (operand1 expr) state)
-                (value? (operand2 expr) state))))
-      ((eq? (operator expr) '==)
-       (or (and (bool? (operand1 expr) state)
-                (bool? (operand2 expr) state))
-           (and (value? (operand1 expr) state)
-                (value? (operand2 expr) state))))
-      (else #f))))
-
-; eval and state helpers
-
-; isVar? - is this a variable? check current scope first, then recurse
-(define isVar?
-  (lambda (expr state)
-    (cond
-      ((null? state) #f)
-      ((member* expr (state-vars state)) #t)
-      (else (isVar? expr (cdr state))))))
-
-; isAssigned? - is the variable assigned to something?
-(define isAssigned?
-  (lambda (expr state)
-    (cond
-      ((null? state) #f) ; searched all frames and came up empty
-      ((and (isVar? expr state) (not (eq? (deref expr state) '()))) #t) ; 
-      (else (isAssigned? expr (cdr state))))))
-
-; deref - given a variable, find its value in the state
-(define deref
-  (lambda (var state)
-    (cond 
-      ((not (isVar? var state)) (error "Null Reference Error"))
-      ((null? (state-vars state)) (deref var (cdr state))) ; base case of current stack frame
-      ((eq? var (car (state-vars state))) (car (state-values state))) ; found our variable, return it
-      (else (deref var (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '())) (cdr state))))))) ; recurse on the state
-
-; push-frame - push a new frame onto the stack
-(define push-frame
-  (lambda (state)
-    (cons '(()()) state)))
-
-; pop-frame - pop the first frame off of the stack
-(define pop-frame
-  (lambda (state)
-    (cdr state)))
-
-(define push-frame-cont
-  (lambda (state-cont)
-    (lambda (x) (push-frame (state-cont x)))))
-
-(define pop-frame-cont
-  (lambda (state-cont)
-    (lambda (x) (pop-frame (state-cont x)))))
 
 ; eval-type functions
 ; evaluates an expression of a certain type
@@ -266,29 +209,30 @@
                         (eval-ass expr (cdr state))))) )))))  ; the rest of this frame
 
 (define eval-begin
-  (lambda (expr state-cont return continue break)
+  (lambda (expr state-cont return continue break throw)
     (if (null? expr)
         state-cont
-        (eval-begin (cdr expr) (evaluate (car expr) state-cont return continue break) return continue break))))
+        (eval-begin (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw))))
 
 (define eval-if
-  (lambda (expr state-cont return continue break)
+  (lambda (expr state-cont return continue break throw)
     (if (eval-bool (if-cond expr) (state-cont e-s))
-        (evaluate (caddr expr) state-cont return continue break)
+        (evaluate (caddr expr) state-cont return continue break throw)
         (if (hasThreeTerms? expr)
             state-cont
-            (evaluate (if-elsex expr) state-cont return continue break)))))
+            (evaluate (if-elsex expr) state-cont return continue break throw)))))
 
 (define eval-while
-  (lambda (expr state-cont return continue break)
+  (lambda (expr state-cont return continue break throw)
     (if (eval-bool (while-cond expr) (state-cont e-s))
         (eval-while expr 
                     (call/cc
                      (lambda (continue-here)
-                       (evaluate (caddr expr) state-cont return continue-here break))) 
+                       (evaluate (caddr expr) state-cont return continue-here break throw))) 
                     return
                     continue
-                    break)
+                    break
+                    throw)
         state-cont)))
 
 ; eval-bool-or-val - evaluate an expr of bool or value (numeric) type
@@ -339,6 +283,121 @@
       ((eq? (operator expr) '/) (floor (/ (eval-value (operand1 expr) state) (eval-value (operand2 expr) state))))
       ((eq? (operator expr) '%) (modulo (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       (else (error "Unknwn Operator: " (operator expr))))))
+
+
+; eval and state helpers
+
+; isVar? - is this a variable? check current scope first, then recurse
+(define isVar?
+  (lambda (expr state)
+    (cond
+      ((null? state) #f)
+      ((member* expr (state-vars state)) #t)
+      (else (isVar? expr (cdr state))))))
+
+; isAssigned? - is the variable assigned to something?
+(define isAssigned?
+  (lambda (expr state)
+    (cond
+      ((null? state) #f) ; searched all frames and came up empty
+      ((and (isVar? expr state) (not (eq? (deref expr state) '()))) #t) ; 
+      (else (isAssigned? expr (cdr state))))))
+
+; deref - given a variable, find its value in the state
+(define deref
+  (lambda (var state)
+    (cond 
+      ((not (isVar? var state)) (error "Null Reference Error"))
+      ((null? (state-vars state)) (deref var (cdr state))) ; base case of current stack frame
+      ((eq? var (car (state-vars state))) (car (state-values state))) ; found our variable, return it
+      (else (deref var (cons (cons (cdr (state-vars state)) (cons (cdr (state-values state)) '())) (cdr state))))))) ; recurse on the state
+
+; push-frame - push a new frame onto the stack
+(define push-frame
+  (lambda (state)
+    (cons '(()()) state)))
+
+; pop-frame - pop the first frame off of the stack
+(define pop-frame
+  (lambda (state)
+    (cdr state)))
+
+(define push-frame-cont
+  (lambda (state-cont)
+    (lambda (x) (push-frame (state-cont x)))))
+
+(define pop-frame-cont
+  (lambda (state-cont)
+    (lambda (x) (pop-frame (state-cont x)))))
+
+; expr-type?
+; functions which determine the type of an expression
+
+; ass? - checks if the expr is a valid assignment statement
+;        if the ass-var of the expr is not decalred, throw an error
+(define ass?
+  (lambda (expr)  
+      (eq? (ass-op expr) '=)))
+
+; value? - is the expr able to be evaluated by value? 
+(define value?
+  (lambda (aexpr state)
+    (cond 
+      ((isAssigned? aexpr state) #t)
+      ((atom? aexpr) (number? aexpr))
+      ((and (isVar? aexpr state) (not (isAssigned? aexpr state))) (error "Error: Attempted to derefernce uninitialized variable")) 
+      ((ass? aexpr) #t)
+      ((eq? (operator aexpr) '+)
+       (and (value? (operand1 aexpr) state)
+            (value? (operand2 aexpr) state)))
+      ((eq? (operator aexpr) '-)
+       (or
+        (value? (operand1 aexpr) state)
+        (and (value? (operand1 aexpr) state)
+            (value? (operand2 aexpr) state))))
+      ((eq? (operator aexpr) '*)
+       (and (value? (operand1 aexpr) state)
+            (value? (operand2 aexpr) state)))
+      ((eq? (operator aexpr) '/)
+       (and (value? (operand1 aexpr) state)
+            (value? (operand2 aexpr) state)))
+      ((eq? (operator aexpr) '%)
+       (and (value? (operand1 aexpr) state)
+            (value? (operand2 aexpr) state)))
+      (else #f))))
+
+; bool? - is the expr able to be evaluated by eval-bool?
+(define bool?
+  (lambda (expr state)
+    (cond
+      ((atom? expr) (or (eq? expr 'true) (eq? expr "TRUE") (eq? expr 'false) (eq? expr "FALSE")) ) ; if it's an atom, it must be 'TRUE or 'FALSE or a variable 0_0
+      ((eq? (operator expr) '!)
+       (or
+        (isVar? (operand1 expr) state)
+        (bool? (operand1 expr) state)))
+      ((eq? (operator expr) '||) (valid-expr-bool? expr state)) ; (valid-expr (op expr state)
+      ((eq? (operator expr) '&&) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '>) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '<) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '<=) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '>=) (valid-expr-bool? expr state))
+      ((eq? (operator expr) '!=)
+       (or (and (bool? (operand1 expr) state)
+                (bool? (operand2 expr) state))
+           (and (value? (operand1 expr) state)
+                (value? (operand2 expr) state))))
+      ((eq? (operator expr) '==)
+       (or (and (bool? (operand1 expr) state)
+                (bool? (operand2 expr) state))
+           (and (value? (operand1 expr) state)
+                (value? (operand2 expr) state))))
+      (else #f))))
+
+; try/catch/finally helpers
+(define finally-block (lambda (ex) (cons 'begin (cadr (cadddr ex)))))
+(define catch-block (lambda (ex) (cons 'begin (caddr (caddr ex)))))
+(define try-block (lambda (ex) (cons 'begin (cadr ex))))
+(define catch-var (lambda (ex) (car (cadr (caddr ex)))))
 
 ; abstraction of state operators
 (define state-vars (lambda (s) (car (car s))))
