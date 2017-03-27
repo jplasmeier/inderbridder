@@ -1,15 +1,13 @@
-; Programming Project Part 1
-; A simple interpreter for a basic language
-; J. Plasmeier | jgp45@case.edu
-; 02/13/2017
+; Programming Project Part 2
+; Quinten Hutchison, Jacob Kessler, Justin Plasmeier
 (load "simpleParser.scm")
 
 ; interpreter-file - parsers a file and interprets its code
-(define interpret-file
-  (lambda (file)
-    (interpret (parser file))))
-
 (define interpret
+  (lambda (file)
+    (interpreter (parser file))))
+
+(define interpreter
   (lambda (l)
     (call/cc ; creates a break with the current control context: the state at this time, including the call stack
      (lambda (return-here)
@@ -42,58 +40,64 @@
                                   (lambda (break-here)
                                     (eval-while l state-cont return continue break-here throw))))
       ((eq? (operator l) 'continue) (continue state-cont))
-      ;((eq? (operator l) 'finally) (eval-finally l state-cont return continue break throw))
-      ((eq? (operator l) 'try) (eval-finally l state-cont return continue break throw))
-      ((eq? (operator l) 'var) (lambda (v) (eval-decl l (state-cont v))))
-      ((eq? (operator l) '=) (lambda (v) (eval-ass l (state-cont v))))
+      ((eq? (operator l) 'try) (handle-try l state-cont return continue break throw))
+      ((eq? (operator l) 'var) (eval-decl l state-cont))
+      ((eq? (operator l) '=) (eval-ass l state-cont))
       (else (error "err: fell thru")) )))
+
+(define handle-try
+  (lambda (expr state-cont return continue break throw)
+    (if (null? (caddr expr))
+        (eval-finally (cadddr expr); no catch
+                      (push-frame-cont (eval-try (cadr expr) 
+                                                 (push-frame-cont state-cont) 
+                                                 return 
+                                                 (lambda (c) (continue (pop-frame-cont c)))
+                                                 (lambda (b) (break (pop-frame-cont b)))
+                                                 (lambda (t e) (throw (pop-frame-cont t) e))))
+                      return
+                      (lambda (c) (continue (pop-frame-cont c)))
+                      (lambda (b) (break (pop-frame-cont b)))
+                      (lambda (t e) (throw (pop-frame-cont t) e)))
+        (eval-finally (cadddr expr)
+                      (push-frame-cont (call/cc
+                                        (lambda (throw-here)
+                                          (eval-try (cadr expr) 
+                                                    (push-frame-cont state-cont)
+                                                    return
+                                                    (lambda (c) (continue (pop-frame-cont c)))
+                                                    (lambda (b) (break (pop-frame-cont b)))
+                                                    (lambda (t e) (throw-here (eval-catch (caddr (caddr expr))
+                                                                                          (eval-decl (list 'var (car (cadr (caddr expr))) e) t)
+                                                                                          return
+                                                                                          (lambda (c) (continue (pop-frame-cont c)))
+                                                                                          (lambda (b) (break (pop-frame-cont b)))
+                                                                                          (lambda (t e) (throw (pop-frame-cont t) e)))))))))
+                      return
+                      (lambda (c) (continue (pop-frame-cont c)))
+                      (lambda (b) (break (pop-frame-cont b)))
+                      (lambda (t e) (throw (pop-frame-cont t) e)))))); catch
 
 (define eval-finally
   (lambda (expr state-cont return continue break throw)
-    (if (null? (cadddr expr)) ; is there a finally block?
-        (if (null? (caddr expr)) ; no finally, but is there a catch block?
-            (eval-try expr state-cont return continue break throw) ; no catch or finally, just eval-try
-            (call/cc  ; catch but no finally
-             (lambda (throw-here)
-               (eval-try (cadr expr) 
-                         (push-frame-cont state-cont) 
-                         return 
-                         (lambda (c) (continue (pop-frame-cont c)))
-                         (lambda (b) (break (pop-frame-cont b)))
-                         (lambda (t e) (throw-here (eval-catch (catch-body expr)
-                                                               (lambda (c) (eval-decl (list 'var (catch-var expr) e) ((eval-try expr state-cont return continue break throw-here) c)))
-                                                               return
-                                                               (lambda (c) (continue (pop-frame-cont c))) 
-                                                               (lambda (b) (break (pop-frame-cont b)))
-                                                               (lambda (t e) (throw (pop-frame-cont t) e)))))))))
-        (if (null? (caddr expr)) ; is there a catch block?
-            (evaluate (finally-block expr) (call/cc ; no catch
-                                            (lambda (throw-here)
-                                              (eval-try expr state-cont return continue break throw-here))) return continue break throw) ; finally but not catch
-            (evaluate (finally-block expr) ; yes catch
-                            (call/cc
-                             (lambda (throw-here)
-                               (eval-catch expr 
-                                           (lambda (c) (eval-decl (list 'var (catch-var expr) e) ((eval-try expr state-cont return continue break throw-here) c))) 
-                                           return continue break throw-here)))
-                            return continue break throw)))))
+    (cond 
+      ((null? expr) (pop-frame-cont state-cont))
+      ((eq? (operator expr) 'finally) (eval-finally (cadr expr) state-cont return continue break throw))
+      (else (eval-finally (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw)))))
+      
 
 (define eval-catch
   (lambda (expr state-cont return continue break throw)
-    (evaluate (catch-block expr) state-cont return continue break throw)))
+    (if (null? expr)
+        (pop-frame-cont state-cont)
+        (eval-catch (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw))))
 
 (define eval-try 
  (lambda (expr state-cont return continue break throw)
-   (evaluate (try-block expr) state-cont return continue break throw)))
+   (if (null? expr)
+       (pop-frame-cont state-cont)
+       (eval-try (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw))))
                
-; eval-try - evaluates a try body like such: 
-; (try
-;   ((while (< x 10000) (begin (= result (- result 1)) (= x (+ x 10)) (if (> x 1000) (begin (throw x)) (if (> x 100) (begin (break)))))))
-;   ()
-;   (finally ((= result (+ result x)))))
-
-      
-
 ; Helper Functions
 
 ; e-s - empty state. useful for calling state-cont on
@@ -143,8 +147,7 @@
 ; evaluates an expression of a certain type
 
 ; eval-decl - evaluate variable declaration
-;(if (null? (var-tail expr))
-(define eval-decl
+(define eval-decl-s
   (lambda (expr state) 
       (if (null? (var-tail expr)) ; is there no value provided?
         (cons ; then declare to empty list
@@ -160,14 +163,18 @@
         )
       ))
 
+(define eval-decl
+  (lambda (expr state-cont)
+    (lambda (x) (eval-decl-s expr (state-cont x)))))
+
 ; eval-ass - evaluate an assignment
-(define eval-ass
+(define eval-ass-s
   (lambda (expr state)
     (cond
       ((null? state) '())                      
-      ((isVar? (ass-val expr) state) (eval-ass (list (operator expr) (ass-var expr) (deref (ass-val expr) state)) state)) ; when assigning a variable to a variable, deref first
+      ((isVar? (ass-val expr) state) (eval-ass-s (list (operator expr) (ass-var expr) (deref (ass-val expr) state)) state)) ; when assigning a variable to a variable, deref first
       ((not (isVar? (ass-var expr) state)) (error "Error: Attempted to assign to undeclared variable."))
-      ((null? (state-vars state)) (cons (car state) (eval-ass expr (cdr state)))) ; base case of current state frame
+      ((null? (state-vars state)) (cons (car state) (eval-ass-s expr (cdr state)))) ; base case of current state frame
       ((eq? (ass-var expr) (car (state-vars state))) ; found our variable, return the modified state
        (cons ; cons state variables onto the cons of state-values onto '()
         (cons (state-vars state) ; the state variables
@@ -181,32 +188,36 @@
         (cons 
          (cons ; state-vars of the current frame
           (car (state-vars state))
-          (state-vars (eval-ass expr 
+          (state-vars (eval-ass-s expr 
                                 (cons 
                                  (cons 
                                   (cdr (state-vars state)) 
                                   (cons 
                                    (cdr (state-values state)) 
                                    '()))
-                                 (eval-ass expr (cdr state))))))
+                                 (eval-ass-s expr (cdr state))))))
          (cons ; state-values of the current frame
           (cons
            (car (state-values state))
-           (state-values (eval-ass expr 
+           (state-values (eval-ass-s expr 
                                    (cons 
                                     (cons 
                                      (cdr (state-vars state)) 
                                      (cons 
                                       (cdr (state-values state)) 
                                       '()))
-                                    (eval-ass expr (cdr state)))))) '()))
-        (cdr (eval-ass expr ; the result of recursing on the cdr of the state
+                                    (eval-ass-s expr (cdr state)))))) '()))
+        (cdr (eval-ass-s expr ; the result of recursing on the cdr of the state
                        (cons 
                         (cons (cdr (state-vars state)) 
                               (cons 
                                (cdr (state-values state)) 
                                '()))
-                        (eval-ass expr (cdr state))))) )))))  ; the rest of this frame
+                        (eval-ass-s expr (cdr state))))) )))))  ; the rest of this frame
+
+(define eval-ass
+  (lambda (expr state-cont)
+    (lambda (x) (eval-ass-s expr (state-cont x)))))
 
 (define eval-begin
   (lambda (expr state-cont return continue break throw)
@@ -239,6 +250,7 @@
 (define eval-bool-or-val
   (lambda (expr state)
     (cond
+      ((number? expr) expr)
       ((bool? expr state) (if (eval-bool expr state) "TRUE" "FALSE"))
       ((value? expr state) (eval-value expr state))
       ((not (isVar? expr state)) (error "Error: Attempted to dereference undeclared value"))
@@ -283,7 +295,6 @@
       ((eq? (operator expr) '/) (floor (/ (eval-value (operand1 expr) state) (eval-value (operand2 expr) state))))
       ((eq? (operator expr) '%) (modulo (eval-value (operand1 expr) state) (eval-value (operand2 expr) state)))
       (else (error "Unknwn Operator: " (operator expr))))))
-
 
 ; eval and state helpers
 

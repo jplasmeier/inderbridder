@@ -1,4 +1,4 @@
-(load "interpreter.rkt")
+(load "interpreter.scm")
 
 (string-append "test 1: " (if (eq? (interpret-file "tests/test1.txt" ) 150) "passed" "failed"))
 (string-append "test 2: " (if (eq? (interpret-file "tests/test2.txt" ) -4) "passed" "failed")) 
