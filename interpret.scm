@@ -1,5 +1,5 @@
-; Programming Project Part 2
-; Quinten Hutchison, Jacob Kessler, Justin Plasmeier
+; Programming Project Part 3
+; Justin Plasmeier
 (load "simpleParser.scm")
 
 ; interpreter-file - parsers a file and interprets its code
@@ -24,6 +24,7 @@
 
 (define evaluate
   (lambda (l state-cont return continue break throw)
+    ;(begin (begin (display "\n") (print (state-cont e-s))) 
     (cond
       ((null? l) e-s)
       ((eq? (operator l) 'return) (return (eval-bool-or-val (cadr l) (state-cont e-s))))
@@ -35,8 +36,13 @@
                                                         (lambda (t e) (throw (pop-frame-cont t) e)))))
       ((eq? (operator l) 'break) (break state-cont))
       ((eq? (operator l) 'throw) (throw state-cont (eval-bool-or-val (operand1 l) (state-cont e-s))))
-      ((eq? (operator l) 'if) (eval-if l state-cont return continue break throw))
-      ((eq? (operator l) 'while) (call/cc
+      ((eq? (operator l) 'if)  (eval-if l 
+                                        state-cont 
+                                        return 
+                                        continue 
+                                        break 
+                                        throw))
+           ((eq? (operator l) 'while) (call/cc
                                   (lambda (break-here)
                                     (eval-while l state-cont return continue break-here throw))))
       ((eq? (operator l) 'continue) (continue state-cont))
@@ -48,8 +54,9 @@
 (define handle-try
   (lambda (expr state-cont return continue break throw)
     (if (null? (caddr expr))
-        (eval-finally (cadddr expr); no catch
-                      (push-frame-cont (eval-try (cadr expr) 
+         
+         (eval-finally (cadddr expr) ; no catch
+                       (pop-frame-cont (eval-try (cadr expr) 
                                                  (push-frame-cont state-cont) 
                                                  return 
                                                  (lambda (c) (continue (pop-frame-cont c)))
@@ -58,30 +65,30 @@
                       return
                       (lambda (c) (continue (pop-frame-cont c)))
                       (lambda (b) (break (pop-frame-cont b)))
-                      (lambda (t e) (throw (pop-frame-cont t) e)))
-        (eval-finally (cadddr expr)
-                      (push-frame-cont (call/cc
+                      (lambda (t e) (throw (pop-frame-cont t) e)))       
+         (eval-finally (cadddr expr) ; eval-finally on result of eval-try with eval-catch in its throw continuation
+                       (push-frame-cont (call/cc
                                         (lambda (throw-here)
-                                          (eval-try (cadr expr) 
+                                          (pop-frame-cont (eval-try (cadr expr) 
                                                     (push-frame-cont state-cont)
                                                     return
                                                     (lambda (c) (continue (pop-frame-cont c)))
                                                     (lambda (b) (break (pop-frame-cont b)))
-                                                    (lambda (t e) (throw-here (eval-catch (caddr (caddr expr))
+                                                    (lambda (t e) (throw-here (eval-catch (caddr (caddr expr)) ; eval-catch in throw continuation
                                                                                           (eval-decl (list 'var (car (cadr (caddr expr))) e) t)
                                                                                           return
                                                                                           (lambda (c) (continue (pop-frame-cont c)))
                                                                                           (lambda (b) (break (pop-frame-cont b)))
-                                                                                          (lambda (t e) (throw (pop-frame-cont t) e)))))))))
-                      return
+                                                                                          (lambda (t e) (throw (pop-frame-cont t) e))))))))))
+                      return ; the rest of the eval-finally args
                       (lambda (c) (continue (pop-frame-cont c)))
                       (lambda (b) (break (pop-frame-cont b)))
-                      (lambda (t e) (throw (pop-frame-cont t) e)))))); catch
+                      (lambda (t e) (throw (pop-frame-cont t) e))))))
 
 (define eval-finally
   (lambda (expr state-cont return continue break throw)
     (cond 
-      ((null? expr) (pop-frame-cont state-cont))
+      ((null? expr) state-cont)
       ((eq? (operator expr) 'finally) (eval-finally (cadr expr) state-cont return continue break throw))
       (else (eval-finally (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw)))))
       
@@ -89,13 +96,13 @@
 (define eval-catch
   (lambda (expr state-cont return continue break throw)
     (if (null? expr)
-        (pop-frame-cont state-cont)
+        state-cont
         (eval-catch (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw))))
 
 (define eval-try 
  (lambda (expr state-cont return continue break throw)
    (if (null? expr)
-       (pop-frame-cont state-cont)
+       state-cont
        (eval-try (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw))))
                
 ; Helper Functions
@@ -173,6 +180,7 @@
     (cond
       ((null? state) '())                      
       ((isVar? (ass-val expr) state) (eval-ass-s (list (operator expr) (ass-var expr) (deref (ass-val expr) state)) state)) ; when assigning a variable to a variable, deref first
+      ((and (not (atom? (ass-val expr))) (value? (ass-val expr) state)) (eval-ass-s (list (operator expr) (ass-var expr) (eval-bool-or-val (ass-val expr) state)) state))
       ((not (isVar? (ass-var expr) state)) (error "Error: Attempted to assign to undeclared variable."))
       ((null? (state-vars state)) (cons (car state) (eval-ass-s expr (cdr state)))) ; base case of current state frame
       ((eq? (ass-var expr) (car (state-vars state))) ; found our variable, return the modified state
@@ -253,7 +261,7 @@
       ((number? expr) expr)
       ((bool? expr state) (if (eval-bool expr state) "TRUE" "FALSE"))
       ((value? expr state) (eval-value expr state))
-      ((not (isVar? expr state)) (error "Error: Attempted to dereference undeclared value"))
+      ((not (isVar? expr state)) (error (begin (begin (begin (display "\nErr:") (print expr)) (display state)) "Error: Attempted to dereference undeclared value")))
       (else (error "Neither bool nor value")))))
 
 ; get the value of a boolean expression

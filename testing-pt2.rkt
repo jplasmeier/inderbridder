@@ -16,7 +16,7 @@
 (string-append "test 14: " (if (eq? (interpret "tests/Test2-14.txt" ) 12) "passed" "failed"))
 (string-append "test 15: " (if (eq? (interpret "tests/Test2-15.txt" ) 125) "passed" "failed"))
 (string-append "test 16: " (if (eq? (interpret "tests/Test2-16.txt" ) 110) "passed" "failed"))
-;(string-append "test 17: " (if (eq? (interpret "tests/Test2-17.txt" ) 2000400) "passed" "failed")) 
+(string-append "test 17: " (if (eq? (interpret "tests/Test2-17.txt" ) 2000400) "passed" "failed")) 
 (string-append "test 18: " (if (eq? (interpret "tests/Test2-18.txt" ) 101) "passed" "failed")) 
 ;(string-append "test 19: " (if (eq? (interpret "tests/Test2-19.txt" ) (error)) "passed" "failed")) 
 ; bonus
