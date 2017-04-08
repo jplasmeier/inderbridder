@@ -1,6 +1,6 @@
 ; Programming Project Part 3
 ; Justin Plasmeier
-(load "simpleParser.scm")
+(load "functionParser.scm")
 
 ; interpreter-file - parsers a file and interprets its code
 (define interpret
@@ -42,21 +42,26 @@
                                         continue 
                                         break 
                                         throw))
-           ((eq? (operator l) 'while) (call/cc
+      ((eq? (operator l) 'while) (call/cc
                                   (lambda (break-here)
                                     (eval-while l state-cont return continue break-here throw))))
       ((eq? (operator l) 'continue) (continue state-cont))
       ((eq? (operator l) 'try) (handle-try l state-cont return continue break throw))
       ((eq? (operator l) 'var) (eval-decl l state-cont))
+      ((eq? (operator l) 'funcall) (pop-frame-cont (eval-func (cdr l)
+                                                              (push-frame-cont state-cont)
+                                                              return
+                                                              (lambda (c) (continue (pop-frame-cont c))) 
+                                                              (lambda (b) (break (pop-frame-cont b)))
+                                                              (lambda (t e) (throw (pop-frame-cont t) e)))))
       ((eq? (operator l) '=) (eval-ass l state-cont))
       (else (error "err: fell thru")) )))
 
 (define handle-try
   (lambda (expr state-cont return continue break throw)
     (if (null? (caddr expr))
-         
          (eval-finally (cadddr expr) ; no catch
-                       (pop-frame-cont (eval-try (cadr expr) 
+                       (pop-frame-cont (eval-begin (cadr expr) 
                                                  (push-frame-cont state-cont) 
                                                  return 
                                                  (lambda (c) (continue (pop-frame-cont c)))
@@ -69,12 +74,12 @@
          (eval-finally (cadddr expr) ; eval-finally on result of eval-try with eval-catch in its throw continuation
                        (push-frame-cont (call/cc
                                         (lambda (throw-here)
-                                          (pop-frame-cont (eval-try (cadr expr) 
+                                          (pop-frame-cont (eval-begin (cadr expr) 
                                                     (push-frame-cont state-cont)
                                                     return
                                                     (lambda (c) (continue (pop-frame-cont c)))
                                                     (lambda (b) (break (pop-frame-cont b)))
-                                                    (lambda (t e) (throw-here (eval-catch (caddr (caddr expr)) ; eval-catch in throw continuation
+                                                    (lambda (t e) (throw-here (eval-begin (caddr (caddr expr)) ; eval-catch in throw continuation
                                                                                           (eval-decl (list 'var (car (cadr (caddr expr))) e) t)
                                                                                           return
                                                                                           (lambda (c) (continue (pop-frame-cont c)))
@@ -84,27 +89,7 @@
                       (lambda (c) (continue (pop-frame-cont c)))
                       (lambda (b) (break (pop-frame-cont b)))
                       (lambda (t e) (throw (pop-frame-cont t) e))))))
-
-(define eval-finally
-  (lambda (expr state-cont return continue break throw)
-    (cond 
-      ((null? expr) state-cont)
-      ((eq? (operator expr) 'finally) (eval-finally (cadr expr) state-cont return continue break throw))
-      (else (eval-finally (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw)))))
-      
-
-(define eval-catch
-  (lambda (expr state-cont return continue break throw)
-    (if (null? expr)
-        state-cont
-        (eval-catch (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw))))
-
-(define eval-try 
- (lambda (expr state-cont return continue break throw)
-   (if (null? expr)
-       state-cont
-       (eval-try (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw))))
-               
+         
 ; Helper Functions
 
 ; e-s - empty state. useful for calling state-cont on
@@ -254,6 +239,36 @@
                     throw)
         state-cont)))
 
+(define eval-finally
+  (lambda (expr state-cont return continue break throw)
+    (cond 
+      ((null? expr) state-cont)
+      ((eq? (operator expr) 'finally) (eval-begin (cadr expr) state-cont return continue break throw))
+      (else (eval-finally (cdr expr) (evaluate (car expr) state-cont return continue break throw) return continue break throw)))))
+
+; eval-func - applies the body of a function to state and return state
+; expr looks something like (f 3 4) where f is a function
+(define eval-func
+  (lambda (expr state-cont return continue break throw)
+    (eval-begin (cadr (deref (car expr) (state-cont e-s))) ; get the body of the function
+                (bind-parameters (car (deref (car expr) (state-cont e-s))) ; get the params
+                                 (cdr expr) ; get the arguments
+                                 state-cont)              
+                return
+                continue
+                break
+                throw)))
+
+; bind-parameters - a recursive function which applies the arguments to parameters
+(define bind-parameters
+  (lambda (params args state-cont)
+    (cond
+      ((and (null? params) (null? args)) state-cont)
+      ((null? params) (error "Too many arguments, not enough parameters!"))
+      ((null? args) (error "Too many parameters, not enough arguments!"))
+      (else (eval-decl (list 'var (car params) (car args)) (bind-parameters (cdr params) (cdr args) state-cont))))))
+    
+                
 ; eval-bool-or-val - evaluate an expr of bool or value (numeric) type
 (define eval-bool-or-val
   (lambda (expr state)
@@ -411,12 +426,6 @@
            (and (value? (operand1 expr) state)
                 (value? (operand2 expr) state))))
       (else #f))))
-
-; try/catch/finally helpers
-(define finally-block (lambda (ex) (cons 'begin (cadr (cadddr ex)))))
-(define catch-block (lambda (ex) (cons 'begin (caddr (caddr ex)))))
-(define try-block (lambda (ex) (cons 'begin (cadr ex))))
-(define catch-var (lambda (ex) (car (cadr (caddr ex)))))
 
 ; abstraction of state operators
 (define state-vars (lambda (s) (car (car s))))
